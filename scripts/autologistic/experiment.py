@@ -51,6 +51,7 @@ class Experiment(object):
             language_file_path,
             v_graph_file_path,
             h_graph_file_path,
+            distance_thres=kwargs['distance_thres'],
         )
 
     def __init_data(self, language_file_path,
@@ -114,8 +115,17 @@ class Experiment(object):
             print(str(i)+"\t"+feature)
 
     def execute(self, feature_idx_min, feature_idx_max,
-                experiment_type, log=False, with_lasso=False,
-                use_softplus=False, u_lambda=0.0):
+                experiment_type, log=False,
+                cvn=-1,
+                distance_weighting=False,
+                norm_sigma=10.0,
+                gamma_shape=1.0,
+                gamma_scale=0.001,
+                use_m=False,
+                use_emp_mean=False,
+                init_vh=0.0001,
+                sample_param_weight=5,
+    ):
         """Execute multiclass Autologistic model
 
         Args:
@@ -143,8 +153,16 @@ class Experiment(object):
 
             if experiment_type == 'mvi':
                 self.__hide_existing_values(
-                    feature, xs[i], max_feature_value, with_lasso=with_lasso,
-                    use_softplus=use_softplus, u_lambda=u_lambda
+                    feature, xs[i], max_feature_value,
+                    cvn=cvn,
+                    distance_weighting=distance_weighting,
+                    norm_sigma=norm_sigma,
+                    gamma_shape=gamma_shape,
+                    gamma_scale=gamma_scale,
+                    use_m=use_m,
+                    use_emp_mean=use_emp_mean,
+                    init_vh=init_vh,
+                    sample_param_weight=sample_param_weight,
                 )
             elif experiment_type == 'param':
                 model = Autologistic(
@@ -152,16 +170,21 @@ class Experiment(object):
                     self.vertical_graph,
                     self.horizontal_graph,
                     max_feature_value,
-                    use_softplus=use_softplus,
-                    u_lambda=u_lambda,
-                    with_lasso=with_lasso
+                    distance_weighting=distance_weighting,
+                    norm_sigma=norm_sigma,
+                    gamma_shape=gamma_shape,
+                    gamma_scale=gamma_scale,
+                    use_m=use_m,
+                    use_emp_mean=use_emp_mean,
+                    init_vh=init_vh,
+                    sample_param_weight=sample_param_weight,
                 )
                 result = model.estimate_with_missing_value()
                 output_dir_param = os.path.join(
                     self.output_dir, 'param'
                 )
                 if not os.path.exists(output_dir_param):
-                    os.makedirs(output_dir_param)
+                    os.makedirs(output_dir_param, exist_ok=True)
                 self.__output_result(
                     feature, xs[i], result,
                     output_dir_param, hidden_indexes=[]
@@ -210,7 +233,16 @@ class Experiment(object):
 
         return (selected_features, xs)
 
-    def __hide_existing_values(self, feature, x, max_value, with_lasso=False, use_softplus=False, u_lambda=0.0):
+    def __hide_existing_values(self, feature, x, max_value, cvn=-1,
+                               distance_weighting=False,
+                               norm_sigma=10.0,
+                               gamma_shape=1.0,
+                               gamma_scale=0.001,
+                               use_m=False,
+                               use_emp_mean=False,
+                               init_vh=0.0001,
+                               sample_param_weight=5,
+    ):
         """Execute a 10-fold cross validation experiment to
            evaluate model performance of missing value imputation
         """
@@ -222,10 +254,13 @@ class Experiment(object):
         split_unit = len(not_missing_indexes)//fold_num
         print('Split_unit', split_unit)
 
-        k_fold = KFold(n_splits=fold_num)
+        k_fold = KFold(n_splits=fold_num, shuffle=True, random_state=np.random.RandomState(10))
         for cv_count, folds in enumerate(k_fold.split(not_missing_indexes)):
+            if cvn >= 0 and cv_count != cvn:
+                continue
             x = x_original.copy()
             _, test = folds
+            test.sort()
             hidden_indexes = [not_missing_indexes[y] for y in test]
 
             test_data = {}
@@ -238,17 +273,22 @@ class Experiment(object):
                 'mvi', "{0:03d}".format(cv_count)
             )
             if not os.path.exists(output_dir_mvi):
-                os.makedirs(output_dir_mvi)
+                os.makedirs(output_dir_mvi, exist_ok=True)
             model = Autologistic(
                 x,
                 self.vertical_graph,
                 self.horizontal_graph,
                 max_value,
-                use_softplus=use_softplus,
-                with_lasso=with_lasso,
-                u_lambda=u_lambda
+                distance_weighting=distance_weighting,
+                norm_sigma=norm_sigma,
+                gamma_shape=gamma_shape,
+                gamma_scale=gamma_scale,
+                use_m=use_m,
+                use_emp_mean=use_emp_mean,
+                init_vh=init_vh,
+                sample_param_weight=sample_param_weight,
             )
-            result = model.estimate_with_missing_value(test_data)
+            result = model.estimate_with_missing_value(test_data=test_data)
 
             self.__output_result(feature, x_original, result,
                                  output_dir_mvi, hidden_indexes)
@@ -273,6 +313,8 @@ class Experiment(object):
         output_json['parameters'] = estimated_params
         if accuracy_exp:
             output_json['accuracy'] = info_others['accuracies']
+        if 'sampled_params' in info_others:
+            output_json['sampled_params'] = info_others['sampled_params']
 
         output_json['estimate_results'] = []
         for language_idx, int_value in enumerate(estimated_x):

@@ -54,7 +54,6 @@ class HorizontalGraphGenerator():
                     horizontal_graph.add_edge(i,
                                               j,
                                               weight=w)
-        # output_path = os.path.join('results/autologistic/', pickle_file_name)
         with open(pickle_file_name, 'wb') as f:
             pickle.dump(horizontal_graph, f)
 
